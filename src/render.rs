@@ -58,18 +58,21 @@ impl Renderer {
         filename_input: &str,
         find_input: &str,
         confirmed_find_term: &Option<String>,
+				status_message: &Option<String>,
     ) -> Result<(), Error> {        
         let total_lines = buffer.len_lines();
 
-        stdout.execute(cursor::Hide)?;
-        stdout.execute(cursor::MoveTo(0, 0))?;
-        stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
+        queue!(stdout, cursor::MoveTo(0, 0))?;
+        queue!(stdout, crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
         write!(stdout, "Welcome to rusty")?;
 
         // Draw prompt/status line at bottom based on mode
-        stdout.execute(cursor::MoveTo(0, (max_lines + 1) as u16))?;
-        stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
-        match mode {
+        queue!(stdout, cursor::MoveTo(0, (max_lines + 1) as u16))?;
+        queue!(stdout, crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
+				if let Some(message) = status_message {
+					write!(stdout, "{}", message)?;
+				} else {
+        	match mode {
             InputMode::EnteringFileNameOpen => {
                 write!(stdout, "Open file: {}", filename_input)?;
             }
@@ -79,10 +82,14 @@ impl Renderer {
             InputMode::Finding => {
                 write!(stdout, "Find: {}", find_input)?;
             }
-            InputMode::Editing => {
-                // Leave empty or print status
+            InputMode::Normal => {
+            	write!(stdout, "-- NORMAL --")?; 
             }
-        }
+						InputMode::Insert => {
+							write!(stdout, "-- INSERT --")?;
+						}
+        	}
+				}
 
         // Go through dirty lines and redraw
         for &line_idx in dirty_lines.iter() {
@@ -96,8 +103,8 @@ impl Renderer {
                 let tilde_line = format!("{:>width$}~ ", "", width = 3);
                 let cached_line = self.virtual_screen.get_line(view_line_idx).unwrap_or("");
                 if cached_line != tilde_line {
-                    stdout.execute(cursor::MoveTo(0, (view_line_idx + 1) as u16))?;
-                    stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
+                    queue!(stdout, cursor::MoveTo(0, (view_line_idx + 1) as u16))?;
+                    queue!(stdout, crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
                     write!(stdout, "{}", tilde_line)?;
                     self.virtual_screen.update_line(view_line_idx, &tilde_line);
                 }
@@ -114,8 +121,16 @@ impl Renderer {
             let gutter_width = 4;
             let gutter = format!("{:>width$} ", line_idx + 1, width = gutter_width);
 
-            stdout.execute(cursor::MoveTo(0, (view_line_idx + 1) as u16))?;
-            stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
+						let new_line = format!("{}{}", gutter, line_str);
+
+						let cached_line = self.virtual_screen.get_line(view_line_idx).unwrap_or("");
+
+						if line_idx != current_line && cached_line == new_line {
+							continue;
+						}
+
+            queue!(stdout, cursor::MoveTo(0, (view_line_idx + 1) as u16))?;
+            queue!(stdout, crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
             queue!(stdout, Print(&gutter))?;
 
             if let Some( find_term) = confirmed_find_term.as_ref() {
@@ -134,19 +149,43 @@ impl Renderer {
             } else {
                 queue!(stdout, Print(&line_str))?;
             }
-
-            self.virtual_screen.update_line(view_line_idx, &format!("{}{}", gutter, line_str));
+						
+            self.virtual_screen.update_line(view_line_idx, &new_line);
         }
 
         // Draw cursor position
         let cursor_y = (current_line.saturating_sub(viewport_row) + 1) as u16;
-        let cursor_x = (cursor_col + 4 + 1) as u16;
-        stdout.execute(cursor::MoveTo(cursor_x, cursor_y))?;
+
+				let rope_line = buffer.line(current_line);
+
+				let cursor_line_str = if rope_line.len_chars() > 0 && rope_line.char(rope_line.len_chars() - 1) == '\n' {
+					rope_line.slice(0..rope_line.len_chars() - 1).to_string()
+				} else {
+					rope_line.to_string()
+				};
+	
+				let mut visual_x = 0;
+				let mut cursor_screen_x = 0;
+				
+				for (i, ch) in cursor_line_str.chars().enumerate() {
+					if i == cursor_col {
+						cursor_screen_x = visual_x;
+					}
+					visual_x += 1;
+				}
+
+				if cursor_col >= cursor_line_str.chars().count() {
+					cursor_screen_x = visual_x;
+				}
+
+				let gutter_width = 4;
+        let cursor_x = (gutter_width + 1 + cursor_screen_x) as u16;
+        queue!(stdout, cursor::MoveTo(cursor_x, cursor_y))?;
 
         if cursor_visible {
-            stdout.execute(cursor::Show)?;
+            queue!(stdout, cursor::Show)?;
         } else {
-            stdout.execute(cursor::Hide)?;
+            queue!(stdout, cursor::Hide)?;
         }
 
         stdout.flush()?;

@@ -122,14 +122,15 @@ impl UndoRedoStacks {
             for op in action.ops.iter().rev() {
                 match op {
                     EditOp::Insert { char_idx, content } => {
-                        buffer.remove(*char_idx, content.len());
+                        buffer.remove(*char_idx, content.chars().count());
                         *cursor = *char_idx;
                         dirty_lines.insert(buffer.char_to_line(*char_idx));
                     }
                     EditOp::Delete { char_idx, content } => {
-                        buffer.insert_char(*char_idx, content.chars().next().unwrap()); // Slight simplification
-                        *cursor = *char_idx + content.len();
-                        dirty_lines.insert(buffer.char_to_line(*char_idx));
+												for (i, c) in content.chars().enumerate() {
+                        	buffer.insert_char(char_idx + i, c); 												
+												}
+                        *cursor = char_idx + content.chars().count();
                     }
                 }
             }
@@ -142,14 +143,14 @@ impl UndoRedoStacks {
             for op in &action.ops {
                 match op {
                     EditOp::Insert { char_idx, content } => {
-                        for c in content.chars() {
-                            buffer.insert_char(*char_idx, c);
+                        for (i, c) in content.chars().enumerate() {
+                            buffer.insert_char(char_idx + i, c);
                         }
-                        *cursor = *char_idx + content.len();
+                        *cursor = *char_idx + content.chars().count();
                         dirty_lines.insert(buffer.char_to_line(*char_idx));
                     }
                     EditOp::Delete { char_idx, content } => {
-                        buffer.remove(*char_idx, content.len());
+                        buffer.remove(*char_idx, content.chars().count());
                         *cursor = *char_idx;
                         dirty_lines.insert(buffer.char_to_line(*char_idx));
                     }

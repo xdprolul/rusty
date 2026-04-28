@@ -10,6 +10,7 @@ use crate::input::{InputHandler, InputMode, Command};
 use crate::render::{Renderer, VirtualScreen};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
+use crossterm::event::poll;
 
 fn main() -> Result<()> {
     let mut stdout = stdout();
@@ -31,19 +32,33 @@ fn main() -> Result<()> {
 
     let mut cursor_visible = true;
     let mut last_cursor_toggle = Instant::now();
+		let mut last_input_time = Instant::now();
     const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
     'mainloop: loop {
-        // Blink cursor timing
-        if last_cursor_toggle.elapsed() >= CURSOR_BLINK_INTERVAL {
-            cursor_visible = !cursor_visible;
-            last_cursor_toggle = Instant::now();
-        }
-
         // Calculate current line and cursor col
         let current_line = buffer.char_to_line(cursor_char_idx);
         let line_start_char_idx = buffer.line_to_char(current_line);
         let cursor_col = cursor_char_idx.saturating_sub(line_start_char_idx);
+
+       	let mode = input_handler.get_mode();
+
+				if mode != &InputMode::Insert {
+					cursor_visible = false;
+				} else {				
+					let idle_duration = last_input_time.elapsed();
+
+					if idle_duration >= Duration::from_millis(500) {
+      			if last_cursor_toggle.elapsed() >= CURSOR_BLINK_INTERVAL {
+        	  	cursor_visible = !cursor_visible;
+        	    last_cursor_toggle = Instant::now();
+        		}
+					} else {
+						cursor_visible = true;
+					}
+				}
+
+				dirty_lines.insert(current_line);
 
         // Adjust viewport for cursor
         if current_line < viewport_row {
@@ -68,18 +83,27 @@ fn main() -> Result<()> {
             &input_handler.filename_input,
             &input_handler.find_input,
             &input_handler.confirmed_find_term,
+						&input_handler.status_message,
         )?;
         dirty_lines.clear();
 
         // Input handling
-        if let Some(command) = input_handler.process_input()? {
+				//if poll(Duration::from_millis(10))? {
+        	if let Some(command) = input_handler.process_input()? {
+						last_input_time = Instant::now();
+						cursor_visible = true;
             match command {
-                Command::Quit => break 'mainloop,
+                Command::Quit => break 'mainloop ,
                 Command::InsertChar(c) => {
+									if input_handler.get_mode() == &InputMode::Insert {
                     buffer.insert_char(cursor_char_idx, c);
                     undo_redo.add_insert(cursor_char_idx, c.to_string());
                     cursor_char_idx += 1;
-                    dirty_lines.insert(buffer.char_to_line(cursor_char_idx));
+
+										let line = buffer.char_to_line(cursor_char_idx);
+										dirty_lines.insert(line);
+                    dirty_lines.insert(line + 1);
+									}
                 }
                 Command::MoveLeft => { if cursor_char_idx > 0 { cursor_char_idx -= 1; } }
                 Command::MoveRight => { if cursor_char_idx < buffer.len_chars() { cursor_char_idx += 1; } }
@@ -105,10 +129,13 @@ fn main() -> Result<()> {
                     if cursor_char_idx > 0 {
                         let del_start = cursor_char_idx - 1;
                         let content = buffer.slice(del_start..cursor_char_idx);
-                        buffer.remove(del_start, content.len());
+												let char_count = content.chars().count();
+                        buffer.remove(del_start, char_count);
                         cursor_char_idx = del_start;
                         undo_redo.add_delete(del_start, content);
-                        dirty_lines.insert(buffer.char_to_line(cursor_char_idx));
+												let line = buffer.char_to_line(cursor_char_idx);
+												dirty_lines.insert(line);
+												dirty_lines.insert(line + 1);
                     }
                 }
                 Command::InsertNewline => {
@@ -142,10 +169,11 @@ fn main() -> Result<()> {
                 },
                 _ => {}
             }
-        }
+        
+			}
     }
 
     disable_raw_mode()?;
     stdout.execute(LeaveAlternateScreen)?;
-    Ok(())
+    Ok(())	
 }
